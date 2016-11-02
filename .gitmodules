@@ -1,0 +1,6 @@
+[submodule "GitRekt/Assets/M8"]
+	path = GitRekt/Assets/M8
+	url = https://github.com/ddionisio/MateUnity.git
+[submodule "GitRekt/Assets/M8Animator"]
+	path = GitRekt/Assets/M8Animator
+	url = https://github.com/ddionisio/MateAnimator.git
