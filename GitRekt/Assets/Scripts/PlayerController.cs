@@ -1,30 +1,33 @@
 ﻿using UnityEngine;
 using System.Collections;
 
-public class PlayerController : MonoBehaviour {
+public class PlayerController : M8.SingletonBehaviour<PlayerController> {
     public PlayerEntity player { get { return mPlayer; } }
+    public DebrisCollector debrisCollector { get { return mDebrisCollector; } }
 
     private PlayerEntity mPlayer;
+    private DebrisCollector mDebrisCollector;
 
     private bool mIsFocus = true;
-
-    void OnDestroy() {
+    
+    protected override void OnInstanceDeinit() {
         if(M8.InputManager.instance)
             M8.InputManager.instance.RemoveButtonCall(0, InputAction.Menu, OnInputMenu);
 
         if(M8.UIModal.Manager.instance)
-            M8.UIModal.Manager.instance.activeCallback += OnUIModalActive;
+            M8.UIModal.Manager.instance.activeCallback -= OnUIModalActive;
     }
 
-    void Awake() {
+    protected override void OnInstanceInit() {
         mPlayer = GetComponentInChildren<PlayerEntity>();
+        mDebrisCollector = GetComponentInChildren<DebrisCollector>();
 
         M8.UIModal.Manager.instance.activeCallback += OnUIModalActive;
 
         M8.InputManager.instance.AddButtonCall(0, InputAction.Menu, OnInputMenu);
     }
 
-	IEnumerator Start () {
+    IEnumerator Start () {
         yield return null;
 
         mPlayer.Activate();

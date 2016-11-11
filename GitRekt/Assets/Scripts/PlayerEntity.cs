@@ -5,6 +5,8 @@ using System.Collections.Generic;
 public class PlayerEntity : M8.EntityBase {
     public const int maxAvgSpeedCount = 50;
 
+    public delegate Vector2 OnUpdatePosition(Vector2 pos, float radius);
+
     public LayerMask harmLayerMask;
 
     public M8.Animator.AnimatorData animator;
@@ -32,6 +34,7 @@ public class PlayerEntity : M8.EntityBase {
         }
     }
 
+    public float radius { get { return mCircleColl.radius; } }
     public Rigidbody2D body { get { return mBody; } }
     public CircleCollider2D circleCollider { get { return mCircleColl; } }
     public SpringJoint2D joint { get { return mJoint; } }
@@ -39,9 +42,11 @@ public class PlayerEntity : M8.EntityBase {
     public Rigidbody2D ballBody { get { return mBallBody; } }
 
     private PlayerStats mStats;
+
+    private List<OnUpdatePosition> mUpdatePositions = new List<OnUpdatePosition>();
         
     private bool mInputEnabled = false;
-
+    
     private Vector2 mCurDir = Vector2.zero;
     private float mCurSpeed = 0.0f;
     private Vector2 mCurVel = Vector2.zero;
@@ -60,7 +65,16 @@ public class PlayerEntity : M8.EntityBase {
     private float mBallCurDragSpd;
 
     private Queue<float> mAvgSpeedCache = new Queue<float>(maxAvgSpeedCount);
+    private float mAvgSpeedSum;
     private float mAvgSpeed;
+
+    public void AddUpdatePosition(OnUpdatePosition func) {
+        mUpdatePositions.Add(func);
+    }
+
+    public void RemoveUpdatePosition(OnUpdatePosition func) {
+        mUpdatePositions.Remove(func);
+    }
 
     protected override void StateChanged() {
         switch((EntityState)prevState) {
@@ -78,6 +92,7 @@ public class PlayerEntity : M8.EntityBase {
                 inputEnabled = true;
 
                 mAvgSpeedCache.Clear();
+                mAvgSpeedSum = 0f;
                 mAvgSpeed = 0f;
                 break;
 
@@ -158,11 +173,16 @@ public class PlayerEntity : M8.EntityBase {
                     mInputAxis.y = input.GetAxis(0, InputAction.Vertical);
 
                     if(mInputAxis.x != 0f || mInputAxis.y != 0f) {
-                        var toPos = Vector2.SmoothDamp(pos, pos + mInputAxis, ref mInputDampVel, dt);
+                        var toPos = pos + mInputAxis;
 
-                        var finalPos = UpdatePosition(toPos);
+                        //adjust position
+                        toPos = UpdatePosition(toPos);
 
-                        mCurVel = (finalPos - pos)/dt;
+                        toPos = Vector2.SmoothDamp(pos, toPos, ref mInputDampVel, dt);
+
+                        ApplyPosition(toPos);
+
+                        mCurVel = (toPos - pos)/dt;
                         mCurSpeed = mCurVel.magnitude;
                         if(mCurSpeed > 0f)
                             mCurDir = mCurVel / mCurSpeed;
@@ -178,14 +198,13 @@ public class PlayerEntity : M8.EntityBase {
 
                     //compute average
                     if(mAvgSpeedCache.Count >= maxAvgSpeedCount)
-                        mAvgSpeedCache.Dequeue();
+                        mAvgSpeedSum -= mAvgSpeedCache.Dequeue();
+
                     mAvgSpeedCache.Enqueue(mCurSpeed);
 
-                    mAvgSpeed = 0f;
-                    foreach(var spd in mAvgSpeedCache)
-                        mAvgSpeed += spd;
-
-                    mAvgSpeed /= mAvgSpeedCache.Count;
+                    mAvgSpeedSum += mCurSpeed;
+                    
+                    mAvgSpeed = mAvgSpeedSum/mAvgSpeedCache.Count;
 
                     //Debug.Log("ball avg speed: "+mAvgSpeed);
                 }
@@ -221,26 +240,12 @@ public class PlayerEntity : M8.EntityBase {
     }
 
     private Vector2 UpdatePosition(Vector2 pos) {
-        //check bound
-        M8.Camera2D cam2D = M8.Camera2D.main;
-        Rect screen = cam2D.screenExtent;
-        Vector3 cam2DPos = cam2D.transform.position;
-
-        float hW = screen.width*0.5f;
-        float hH = screen.height*0.5f;
-
-        if(pos.x < cam2DPos.x - hW)
-            pos.x = cam2DPos.x - hW;
-        else if(pos.x > cam2DPos.y + hW)
-            pos.x = cam2DPos.y + hW;
-
-        if(pos.y < cam2DPos.y - hH)
-            pos.y = cam2DPos.y - hH;
-        else if(pos.y > cam2DPos.y + hH)
-            pos.y = cam2DPos.y + hH;
-
-        mBody.MovePosition(new Vector2(pos.x, pos.y));
-
+        for(int i = 0; i < mUpdatePositions.Count; i++)
+            pos = mUpdatePositions[i](pos, radius);
         return pos;
+    }
+
+    private void ApplyPosition(Vector2 pos) {
+        mBody.MovePosition(pos);
     }
 }
