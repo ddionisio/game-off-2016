@@ -2,16 +2,32 @@
 using System.Collections;
 using System.Collections.Generic;
 
+[System.Serializable]
+public struct BallDragData {
+    public float min;
+    public float max;
+    public float accel;
+
+    public float playerSpeedThreshold;
+}
+
 public class PlayerEntity : M8.EntityBase {
     public const int maxAvgSpeedCount = 50;
 
     public delegate Vector2 OnUpdatePosition(Vector2 pos, float radius);
 
+    [Header("Data")]
+    public float lineMaxLength = 1.5f;
+    public float lineDanger = 0.2f;
+    
+    public BallDragData ballDrag;
+
     public LayerMask harmLayerMask;
 
+    [Header("Setup")]
     public M8.Animator.AnimatorData animator;
 
-    public PlayerStats stats { get { return mStats; } }
+    public M8.Stats stats { get { return mStats; } }
 
     public Vector2 velocity { get { return mCurVel; } }
     public float speed { get { return mCurSpeed; } }
@@ -41,7 +57,7 @@ public class PlayerEntity : M8.EntityBase {
     public GameObject ball { get { return mBall; } }
     public Rigidbody2D ballBody { get { return mBallBody; } }
 
-    private PlayerStats mStats;
+    private M8.Stats mStats;
 
     private List<OnUpdatePosition> mUpdatePositions = new List<OnUpdatePosition>();
         
@@ -132,7 +148,7 @@ public class PlayerEntity : M8.EntityBase {
         base.Awake();
 
         //initialize data/variables
-        mStats = GetComponent<PlayerStats>();
+        mStats = GetComponent<M8.Stats>();
         mBody = GetComponentInChildren<Rigidbody2D>();
         mCircleColl = GetComponentInChildren<CircleCollider2D>();
         mJoint = GetComponentInChildren<SpringJoint2D>();
@@ -223,16 +239,16 @@ public class PlayerEntity : M8.EntityBase {
         if(!mBallBody)
             return;
 
-        if(mAvgSpeed > stats.ballDrag.playerSpeedThreshold) {
-            mBallCurDrag = stats.ballDrag.min;
+        if(mAvgSpeed > ballDrag.playerSpeedThreshold) {
+            mBallCurDrag = ballDrag.min;
             mBallCurDragSpd = 0f;
         }
         else {
-            if(mBallCurDrag < stats.ballDrag.max) {
-                mBallCurDragSpd += stats.ballDrag.accel * Time.deltaTime;
+            if(mBallCurDrag < ballDrag.max) {
+                mBallCurDragSpd += ballDrag.accel * Time.deltaTime;
                 mBallCurDrag += mBallCurDragSpd * Time.deltaTime;
-                if(mBallCurDrag > stats.ballDrag.max)
-                    mBallCurDrag = stats.ballDrag.max;
+                if(mBallCurDrag > ballDrag.max)
+                    mBallCurDrag = ballDrag.max;
             }
         }
 

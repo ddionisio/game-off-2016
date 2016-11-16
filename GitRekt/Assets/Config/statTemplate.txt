@@ -1,0 +1,1 @@
+{"items":[{"name":"HP","id":1},{"name":"Score","id":2},{"name":"Life","id":3}]}

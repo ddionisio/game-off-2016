@@ -2,12 +2,15 @@
 using System.Collections;
 using System.Collections.Generic;
 
+using DG.Tweening;
+using DG.Tweening.Core.Easing;
+
 public class DebrisCollector : MonoBehaviour {
     public M8.Auxiliary.AuxTrigger2D auxTrigger;
     public Transform debrisHolder;
+    public Transform debrisBodyHolder; //this is where bodies are tossed out
 
     public float collectDelay = 0.15f;
-    public float collectForce = 30f;
     public float collectTriggerRadiusOfs = 0.15f;
 
     public Rigidbody2D body { get { return mBody; } }
@@ -32,9 +35,8 @@ public class DebrisCollector : MonoBehaviour {
 
     private Dictionary<Rigidbody2D, DebrisData> mDebris = new Dictionary<Rigidbody2D, DebrisData>();
     private List<Debris> mDebrisCollected = new List<Debris>();
-    private Vector2 mDebrisCollectedTotalLocalPos; //local to trigger
-    private Vector2 mDebrisCollectedLocalBoundMin;
-    private Vector2 mDebrisCollectedLocalBoundMax;
+
+    private RaycastHit2D[] mDebrisHitBuffer = new RaycastHit2D[8];
 
     void OnDestroy() {
         if(auxTrigger)
@@ -47,17 +49,13 @@ public class DebrisCollector : MonoBehaviour {
         mBody = GetComponent<Rigidbody2D>();
         mColl = GetComponent<Collider2D>();
         mTriggerColl = auxTrigger.GetComponent<CircleCollider2D>();
-
-        mDebrisCollectedTotalLocalPos = mColl.offset;
-        mDebrisCollectedLocalBoundMin = mColl.offset - (Vector2)mColl.bounds.extents;
-        mDebrisCollectedLocalBoundMax = mColl.offset + (Vector2)mColl.bounds.extents;
     }
 
     void AuxTriggerEnter(Collider2D coll) {
         var collBody = coll.attachedRigidbody;
 
         //already being processed
-        if(mDebris.ContainsKey(collBody))
+        if(collBody == null || mDebris.ContainsKey(collBody))
             return;
 
         var debris = collBody.GetComponent<Debris>();
@@ -73,86 +71,90 @@ public class DebrisCollector : MonoBehaviour {
     }
 
     IEnumerator DoDebrisGather(Debris debris) {
-        yield return null;
-
-        var fixWait = new WaitForFixedUpdate();
-
-        bool isCollided = false;
-
-        System.Action<Collision2D> enterCall = delegate (Collision2D coll) {
-            if(coll.rigidbody == mBody)
-                isCollided = true;
-        };
-
-        System.Action<Collision2D> exitCall = delegate (Collision2D coll) {
-            if(coll.rigidbody == mBody)
-                isCollided = false;
-        };
-
-        debris.collisionEnterCallback += enterCall;
-        debris.collisionExitCallback += exitCall;
-
-        float t = 0f;
-
-        while(!isCollided) {
-            //keep moving towards trigger's center
-            Vector2 pos = triggerCollOffset;
-            Vector2 debrisPos = debris.collOffset;
-            Vector2 delta = pos - debrisPos;
-            Vector2 dir = delta.normalized;
-
-            //check if we are going the opposite side, if so, reset velocity
-            //if(Vector2.Dot(dir, debris.body.velocity) < 0f)
-            //debris.body.velocity = Vector2.zero;
-
-            if(debris.body.velocity.sqrMagnitude < 60*60) {
-                debris.body.AddForce(dir*collectForce);
-            }
-
-            /*if(isCollided) { //linger a bit before settling in
-                t += Time.fixedDeltaTime;
-                if(t >= collectContactDelay)
-                    break;
-            }
-            else { //wait for collision to happen again
-                t = 0f;
-            }*/
-
-            yield return fixWait;
-        }
+        yield return null; //wait for this to be in the debris hits
 
         //secure the debris
-        //debris.body.Cast()
+        Vector2 pos = triggerCollOffset;
+        Vector2 debrisPos = debris.collOffset;
+        Vector2 delta = pos - debrisPos;
+        float dist = delta.magnitude;
+        Vector2 dir = delta/dist;
+                
+        int hitCount = debris.body.Cast(dir, mDebrisHitBuffer, dist);
+        if(hitCount <= 0) { //nothing hit??
+            Debug.LogWarning("Nothing hit for: "+debris.name);            
+            mDebris.Remove(debris.body);
+            yield break;
+        }
 
-        //remove from debris and add to collection
-        debris.collisionEnterCallback -= enterCall;
-        debris.collisionExitCallback -= exitCall;
+        //grab the hit from the ball
+        int hitInd = -1;
+        for(int i = 0; i < hitCount; i++) {
+            if(mDebrisHitBuffer[i].collider == mTriggerColl)
+                continue;
 
-        debris.transform.SetParent(debrisHolder, true);
-        Destroy(debris.body);
-        debris.gameObject.layer = gameObject.layer;
+            if(mDebrisHitBuffer[i].collider.attachedRigidbody == mBody) {
+                hitInd = i;
+            }
+        }
+
+        if(hitInd == -1) { //must have hit something else
+            Debug.LogWarning("Nothing hit for: "+debris.name);
+            mDebris.Remove(debris.body);
+            yield break;
+        }
+                
+        //just take the first hit
+        var toPos = debrisPos + dir*(dist*mDebrisHitBuffer[hitInd].fraction);
+        
+        //move - detach collider from body (or destroy body if it's from another game object)
+        if(debris.body.gameObject != debris.coll.gameObject) {
+            debris.body.transform.SetParent(debrisBodyHolder, true);
+        }
+        else {
+            Destroy(debris.body);
+        }
+                
+        var debrisCollTrans = debris.coll.transform;
+
+        debrisCollTrans.SetParent(debrisHolder, true);
+                
+        var debrisPosLocal = debrisCollTrans.InverseTransformPoint(debrisPos);
+        var toPosLocal = debrisCollTrans.InverseTransformPoint(toPos);
+
+        if(debrisPosLocal != toPosLocal) {
+            debris.coll.enabled = false;
+                        
+            float t = 0f;
+            while(true) {
+                t += Time.deltaTime;
+                if(t > collectDelay)
+                    break;
+
+                float _t = EaseManager.Evaluate(Ease.InCirc, null, t, collectDelay, 0f, 0f);
+
+                debrisCollTrans.localPosition = Vector2.Lerp(debrisPosLocal, toPosLocal, _t);
+
+                yield return null;
+            }
+        }
+
+        //attach to our collection
+        debrisCollTrans.gameObject.layer = gameObject.layer;
+        debrisCollTrans.localPosition = toPosLocal;
+
+        debris.coll.enabled = true;
 
         mDebris.Remove(debris.body);
         mDebrisCollected.Add(debris);
 
-        //compute average center
-        Vector2 debrisLocalPos = mTriggerColl.transform.InverseTransformPoint(debris.collOffset);
-        mDebrisCollectedTotalLocalPos += debrisLocalPos;
-
-        Vector2 debrisBoundMin = debrisLocalPos - (Vector2)debris.collBounds.extents;
-        Vector2 debrisBoundMax = debrisLocalPos + (Vector2)debris.collBounds.extents;
-
-        //compute bounds
-        mDebrisCollectedLocalBoundMin = new Vector2(Mathf.Min(mDebrisCollectedLocalBoundMin.x, debrisBoundMin.x), Mathf.Min(mDebrisCollectedLocalBoundMin.y, debrisBoundMin.y));
-        mDebrisCollectedLocalBoundMax = new Vector2(Mathf.Max(mDebrisCollectedLocalBoundMax.x, debrisBoundMax.x), Mathf.Min(mDebrisCollectedLocalBoundMax.y, debrisBoundMax.y));
-
-        float total = mDebrisCollected.Count + 1; //+1 for base collision (mColl)
-        Vector2 newTriggerLocalPos = mDebrisCollectedTotalLocalPos/total;
-
-        //compute trigger pos/size
-        mTriggerColl.offset = newTriggerLocalPos;
-        mTriggerColl.radius = Mathf.Max(Mathf.Abs(mDebrisCollectedLocalBoundMax.x - mDebrisCollectedLocalBoundMin.x), Mathf.Abs(mDebrisCollectedLocalBoundMax.y - mDebrisCollectedLocalBoundMin.y))*0.5f + collectTriggerRadiusOfs;
-
+        //compute new trigger radius
+        var triggerDelta = toPos - triggerCollOffset;
+        var triggerDeltaDistSqr = triggerDelta.sqrMagnitude;
+        if(triggerDeltaDistSqr + collectTriggerRadiusOfs*collectTriggerRadiusOfs > mTriggerColl.radius*mTriggerColl.radius) {
+            mTriggerColl.radius = Mathf.Sqrt(triggerDeltaDistSqr) + collectTriggerRadiusOfs;
+        }
+        
         if(debrisCollectedCallback != null)
             debrisCollectedCallback(this, debris);
     }
